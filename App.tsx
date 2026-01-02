@@ -40,6 +40,7 @@ const App: React.FC = () => {
   const [loadingAI, setLoadingAI] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [seedCopied, setSeedCopied] = useState(false);
+  const [imageCopied, setImageCopied] = useState(false);
   const [activeTooltip, setActiveTooltip] = useState<{text: string, x: number, y: number} | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -52,6 +53,26 @@ const App: React.FC = () => {
     link.download = `Grainy_Editorial_${settings.width}x${settings.height}.png`;
     link.href = canvasRef.current.toDataURL('image/png');
     link.click();
+  };
+
+  const handleCopyImage = () => {
+    if (!canvasRef.current) return;
+    
+    canvasRef.current.toBlob(async (blob) => {
+      if (!blob) return;
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'image/png': blob
+          })
+        ]);
+        setImageCopied(true);
+        setTimeout(() => setImageCopied(false), 2000);
+      } catch (err) {
+        console.error('Failed to copy to clipboard', err);
+        alert('Failed to copy image. Please try downloading instead.');
+      }
+    });
   };
 
   const updateSetting = <K extends keyof GrainSettings>(key: K, value: GrainSettings[K]) => {
@@ -383,13 +404,31 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* Fixed Download */}
-        <div className="p-10 border-t-4 border-black bg-white">
+        {/* Fixed Download / Copy Actions */}
+        <div className="p-6 border-t-4 border-black bg-white flex flex-col gap-3">
+          <button 
+            onClick={handleCopyImage}
+            className={`w-full font-mono font-bold uppercase text-[10px] tracking-[0.3em] py-4 border-2 border-black transition-all active:scale-[0.98] flex items-center justify-center gap-2 ${
+              imageCopied 
+                ? 'bg-zinc-800 text-white border-zinc-800' 
+                : 'bg-white text-black hover:bg-zinc-50'
+            }`}
+          >
+             {imageCopied ? (
+               <>
+                 <span>COPIED</span>
+                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="square" strokeLinejoin="miter" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+               </>
+             ) : (
+               'COPY TO CLIPBOARD'
+             )}
+          </button>
+          
           <button 
             onClick={handleDownload}
-            className="w-full bg-black text-white font-mono font-bold uppercase text-[11px] tracking-[0.4em] py-5 hover:bg-white hover:text-black border-2 border-black transition-all active:scale-[0.98]"
+            className="w-full bg-black text-white font-mono font-bold uppercase text-[10px] tracking-[0.3em] py-4 hover:bg-white hover:text-black border-2 border-black transition-all active:scale-[0.98]"
           >
-            Export Pattern
+            EXPORT PNG
           </button>
         </div>
       </aside>
