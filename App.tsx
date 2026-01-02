@@ -12,6 +12,8 @@ const DEFAULT_SETTINGS: GrainSettings = {
   scale: 1,
   roughness: 0,
   opacity: 1,
+  randomness: 0,
+  seed: 12345,
   bgColor: '#FFFFFF',
   grainColor: '#000000',
   texture: GrainTexture.UNIFORM,
@@ -24,12 +26,21 @@ const PRESETS = [
   { name: 'A4 ART PAPER', w: 2480, h: 3508, ppi: 300 },
 ];
 
+const ENGINE_CONTROLS = [
+  { label: 'Intensity', key: 'intensity', max: 1, step: 0.01, desc: 'Controls the visibility and strength of the grain texture.' },
+  { label: 'Grain Scale', key: 'scale', max: 20, step: 0.5, desc: 'Adjusts the size of individual grain particles.' },
+  { label: 'Roughness', key: 'roughness', max: 1, step: 0.01, desc: 'Applies a blur to simulate ink spread and softer edges.' },
+  { label: 'Randomness', key: 'randomness', max: 1, step: 0.01, desc: 'Introduces organic irregularity and clumping to the distribution.' },
+] as const;
+
 const App: React.FC = () => {
   const [settings, setSettings] = useState<GrainSettings>(DEFAULT_SETTINGS);
   const [unit, setUnit] = useState<'PX' | 'MM'>('PX');
   const [aiRecipes, setAiRecipes] = useState<AIRecipe[]>([]);
   const [loadingAI, setLoadingAI] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
+  const [seedCopied, setSeedCopied] = useState(false);
+  const [activeTooltip, setActiveTooltip] = useState<{text: string, x: number, y: number} | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const pxToMm = (px: number, ppi: number) => parseFloat(((px * 25.4) / ppi).toFixed(1));
@@ -49,6 +60,16 @@ const App: React.FC = () => {
       finalValue = Math.min(Math.max(APP_LIMITS.MIN_DIMENSION, Number(value)), APP_LIMITS.MAX_DIMENSION) as any;
     }
     setSettings(prev => ({ ...prev, [key]: finalValue }));
+  };
+
+  const randomizeSeed = () => {
+    updateSetting('seed', Math.floor(Math.random() * 100000));
+  };
+
+  const copySeedToClipboard = () => {
+    navigator.clipboard.writeText(settings.seed.toString());
+    setSeedCopied(true);
+    setTimeout(() => setSeedCopied(false), 2000);
   };
 
   const handleDimensionChange = (key: 'width' | 'height', val: string) => {
@@ -108,8 +129,33 @@ const App: React.FC = () => {
     canvasRef.current = canvas;
   }, []);
 
+  const handleLabelEnter = (e: React.MouseEvent, text: string) => {
+    const rect = (e.target as HTMLElement).getBoundingClientRect();
+    setActiveTooltip({
+      text,
+      x: rect.left,
+      y: rect.top
+    });
+  };
+
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-white selection:bg-black selection:text-white">
+    <div className="flex h-screen w-screen overflow-hidden bg-white selection:bg-black selection:text-white relative">
+      
+      {/* Custom Global Tooltip */}
+      {activeTooltip && (
+        <div 
+          className="fixed z-50 bg-black text-white text-[10px] font-mono p-3 max-w-[200px] pointer-events-none shadow-xl"
+          style={{ 
+            left: activeTooltip.x,
+            top: activeTooltip.y - 10,
+            transform: 'translate(0, -100%)'
+          }}
+        >
+          {activeTooltip.text}
+          <div className="absolute left-4 bottom-[-4px] w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[4px] border-t-black"></div>
+        </div>
+      )}
+
       {/* Sidebar - Left Editorial Nav */}
       <aside className="w-80 flex-shrink-0 border-r border-black bg-white flex flex-col z-20 overflow-hidden">
         <div className="p-10 border-b-4 border-black relative">
@@ -208,6 +254,70 @@ const App: React.FC = () => {
                   </button>
                 ))}
               </div>
+            </section>
+
+             {/* Engine Controls Section */}
+            <section className="space-y-8">
+              <h3 className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-zinc-400 italic">02 / Engine</h3>
+              
+              {ENGINE_CONTROLS.map(ctrl => (
+                <div key={ctrl.key} className="space-y-3 group">
+                  <div className="flex justify-between items-baseline relative">
+                    <label 
+                      onMouseEnter={(e) => handleLabelEnter(e, ctrl.desc)}
+                      onMouseLeave={() => setActiveTooltip(null)}
+                      className="text-[9px] font-mono uppercase tracking-widest opacity-50 cursor-help border-b border-dotted border-zinc-300 hover:text-black hover:opacity-100 transition-all"
+                    >
+                      {ctrl.label}
+                    </label>
+                    <span className="text-[10px] font-mono font-bold">{(settings[ctrl.key as keyof GrainSettings] as number).toFixed(2)}</span>
+                  </div>
+                  <input 
+                    type="range" min="0" max={ctrl.max} step={ctrl.step}
+                    value={settings[ctrl.key as keyof GrainSettings] as number}
+                    onChange={e => updateSetting(ctrl.key as any, Number(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+              ))}
+
+               {/* Seed Control */}
+               <div className="space-y-3">
+                  <div className="flex justify-between items-baseline">
+                    <label 
+                      onMouseEnter={(e) => handleLabelEnter(e, "The seed determines the unique random generation sequence. Same seed + same settings = identical result.")}
+                      onMouseLeave={() => setActiveTooltip(null)}
+                      className="text-[9px] font-mono uppercase tracking-widest opacity-50 cursor-help border-b border-dotted border-zinc-300 hover:text-black hover:opacity-100 transition-all"
+                    >
+                      Seed
+                    </label>
+                    <button 
+                      onClick={randomizeSeed}
+                      className="text-[9px] font-mono font-bold underline hover:text-black hover:bg-zinc-100 px-1"
+                    >
+                      RANDOMIZE
+                    </button>
+                  </div>
+                  <div className="flex items-center border-b border-black focus-within:border-b-4 transition-all">
+                    <input 
+                      type="number" 
+                      value={settings.seed}
+                      onChange={e => updateSetting('seed', Number(e.target.value))}
+                      className="flex-1 bg-transparent border-none py-2 text-sm font-mono focus:outline-none min-w-0"
+                    />
+                    <button 
+                      onClick={copySeedToClipboard}
+                      className="p-2 text-zinc-400 hover:text-black hover:bg-zinc-50 transition-colors"
+                      title="Copy Seed"
+                    >
+                      {seedCopied ? (
+                        <svg className="w-3 h-3 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="square" strokeLinejoin="miter" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+                      ) : (
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="square" strokeLinejoin="miter" strokeWidth="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2" /></svg>
+                      )}
+                    </button>
+                  </div>
+                </div>
             </section>
 
             {/* Chromatics Section */}

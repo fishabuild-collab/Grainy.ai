@@ -7,6 +7,17 @@ interface GrainCanvasProps {
   onCanvasReady: (canvas: HTMLCanvasElement) => void;
 }
 
+// Simple seeded PRNG (Mulberry32)
+const createRandom = (seed: number) => {
+  let s = seed;
+  return () => {
+    let t = (s += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
 const GrainCanvas: React.FC<GrainCanvasProps> = ({ settings, onCanvasReady }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isRendering, setIsRendering] = useState(false);
@@ -18,7 +29,7 @@ const GrainCanvas: React.FC<GrainCanvasProps> = ({ settings, onCanvasReady }) =>
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
 
-    const { width, height, intensity, scale, roughness, monochrome, bgColor, grainColor, texture } = settings;
+    const { width, height, intensity, scale, roughness, monochrome, bgColor, grainColor, texture, seed, randomness } = settings;
     
     const finalWidth = Math.min(width, APP_LIMITS.MAX_DIMENSION);
     const finalHeight = Math.min(height, APP_LIMITS.MAX_DIMENSION);
@@ -29,12 +40,52 @@ const GrainCanvas: React.FC<GrainCanvasProps> = ({ settings, onCanvasReady }) =>
     setIsRendering(true);
 
     const renderId = requestAnimationFrame(() => {
+      const rng = createRandom(seed);
+
       ctx.fillStyle = bgColor;
       ctx.fillRect(0, 0, finalWidth, finalHeight);
 
       const noiseScale = Math.max(1, scale);
       const noiseW = Math.ceil(finalWidth / noiseScale);
       const noiseH = Math.ceil(finalHeight / noiseScale);
+
+      // --- Clumping / Randomness Map Generation ---
+      let clutterData: Uint8ClampedArray | null = null;
+      if (randomness > 0.05) {
+        // Create a low-res map for clumping
+        const clutterScale = 50; // How "large" the clumps are
+        const cW = Math.ceil(noiseW / clutterScale) + 2;
+        const cH = Math.ceil(noiseH / clutterScale) + 2;
+        
+        const clutterCanvas = document.createElement('canvas');
+        clutterCanvas.width = cW;
+        clutterCanvas.height = cH;
+        const cCtx = clutterCanvas.getContext('2d');
+        if (cCtx) {
+          const cImgData = cCtx.createImageData(cW, cH);
+          const cData = cImgData.data;
+          for (let i = 0; i < cData.length; i += 4) {
+            const val = rng() * 255;
+            cData[i] = val;     // R
+            cData[i+1] = val;   // G
+            cData[i+2] = val;   // B
+            cData[i+3] = 255;   // A
+          }
+          cCtx.putImageData(cImgData, 0, 0);
+
+          // Upscale to noise dimension to get smooth interpolation
+          const smoothCanvas = document.createElement('canvas');
+          smoothCanvas.width = noiseW;
+          smoothCanvas.height = noiseH;
+          const sCtx = smoothCanvas.getContext('2d');
+          if (sCtx) {
+            sCtx.imageSmoothingEnabled = true; // Essential for soft clouds
+            sCtx.imageSmoothingQuality = 'high';
+            sCtx.drawImage(clutterCanvas, 0, 0, noiseW, noiseH);
+            clutterData = sCtx.getImageData(0, 0, noiseW, noiseH).data;
+          }
+        }
+      }
 
       const offscreen = document.createElement('canvas');
       offscreen.width = noiseW;
@@ -51,26 +102,53 @@ const GrainCanvas: React.FC<GrainCanvasProps> = ({ settings, onCanvasReady }) =>
 
       for (let i = 0; i < data.length; i += 4) {
         let noise = 0;
+        
         switch (texture) {
           case GrainTexture.GAUSSIAN:
-            const u = 1 - Math.random();
-            const v = 1 - Math.random();
+            const u = 1 - rng();
+            const v = 1 - rng();
             noise = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
             noise = (noise + 3) / 6; 
             break;
           case GrainTexture.SPECKLE:
-            noise = Math.random() > (1 - intensity * 0.8) ? Math.random() : 0.5;
+            noise = rng() > (1 - intensity * 0.8) ? rng() : 0.5;
             break;
           case GrainTexture.FILM:
-            noise = (Math.random() + Math.random() + Math.random()) / 3;
+            noise = (rng() + rng() + rng()) / 3;
             break;
           case GrainTexture.UNIFORM:
           default:
-            noise = Math.random();
+            noise = rng();
             break;
         }
 
-        const effect = noise * intensity;
+        let effect = noise * intensity;
+
+        // Apply Clumping / Randomness
+        if (clutterData) {
+          // Normalize clutter value 0-1
+          const mapVal = clutterData[i] / 255; 
+          
+          // If randomness is high, we want more distinct gaps.
+          // mapVal is smooth noise 0-1.
+          // We can use it as a mask.
+          
+          // Contrast curve based on randomness
+          // If mapVal < randomness, suppress grain.
+          // To make it smoother:
+          
+          const threshold = randomness * 0.8; // Max threshold 0.8 to always leave some spots
+          
+          // Soft threshold
+          let mask = (mapVal - threshold) / (1 - threshold);
+          if (mask < 0) mask = 0;
+          if (mask > 1) mask = 1;
+          
+          // If randomness is low (e.g. 0.1), threshold is low, mask is mostly 1.
+          // If randomness is high (e.g. 0.9), threshold is high, mask is mostly 0 (gaps).
+          
+          effect *= (mask * 0.8 + 0.2); // Never fully remove grain, just suppress
+        }
         
         if (monochrome) {
             data[i] = gR;
@@ -78,9 +156,9 @@ const GrainCanvas: React.FC<GrainCanvasProps> = ({ settings, onCanvasReady }) =>
             data[i+2] = gB;
             data[i+3] = effect * 255;
         } else {
-            data[i] = Math.random() * 255;
-            data[i+1] = Math.random() * 255;
-            data[i+2] = Math.random() * 255;
+            data[i] = rng() * 255;
+            data[i+1] = rng() * 255;
+            data[i+2] = rng() * 255;
             data[i+3] = effect * 255;
         }
       }

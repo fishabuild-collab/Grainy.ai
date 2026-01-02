@@ -14,6 +14,8 @@ export interface GrainSettings {
   scale: number; // 1 to 20 (grain size factor)
   roughness: number; // 0 to 1 (blur amount)
   opacity: number; // 0 to 1
+  randomness: number; // 0 to 1 (clumping/distribution)
+  seed: number;
   bgColor: string;
   grainColor: string;
   texture: GrainTexture;
